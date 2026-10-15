@@ -49,4 +49,27 @@ def build_splits(df: pd.DataFrame, group_column: str = "group_strict", val_fract
     looks like. Together they cover every row exactly once, and no value of
     `group_column` is on both sides.
     """
-    raise NotImplementedError("TASK 1: the grouped split")
+    # 1. Egyedi csoportok kigyűjtése növekvő sorrendben
+    groups = np.sort(df[group_column].unique())
+    
+    # 2. Keverés a megadott seed alapján
+    rng = np.random.default_rng(seed)
+    rng.shuffle(groups)
+    
+    # 3. Csoportok áthelyezése a validációs halmazba, amíg el nem érjük a korlátot
+    target_val_size = len(df) * val_fraction
+    val_groups = set()
+    val_count = 0
+    
+    for g in groups:
+        val_groups.add(g)
+        val_count += (df[group_column] == g).sum()
+        if val_count >= target_val_size:
+            break
+            
+    # Pozicionális indexek (train_idx, val_idx) előállítása
+    is_val = df[group_column].isin(val_groups).to_numpy()
+    val_idx = np.where(is_val)[0]
+    train_idx = np.where(~is_val)[0]
+    
+    return train_idx, val_idx
