@@ -296,3 +296,4 @@ create.
 ## Lab 3 Results
 
 * **Honest Early Stopping Final Val RMSE on untouched data:** 0.2281
+* **Self Handcrafted feature baseline RMSE:** 0.1700
