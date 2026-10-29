@@ -75,6 +75,16 @@ def tile_dark_max(gray: np.ndarray, threshold: int = 64) -> float:
     """The darkest tile. A shadow across one corner shows here, not in the whole-frame fraction."""
     return float(max((t < threshold).mean() for t in _tiles(gray)))
 
+def tile_bright_max(gray: np.ndarray, threshold: int = 245) -> float:
+    """Saját feature: A legvilágosabb belső csempe (csillogás, vaku).
+    
+    A whole-frame bright_frac elveszti az apró, de a szöveget már kiégető becsillanást.
+    Itt csak a belső csempéket nézzük (a papír szélét figyelmen kívül hagyva), 
+    és megkeressük azt, amelyikben a legtöbb kiégett (>threshold) pixel van.
+    """
+    vals = np.array([(t > threshold).mean() for t in _tiles(gray)]).reshape(GRID, GRID)
+    return float(vals[1:-1, 1:-1].max())
+
 
 FEATURES = {
     "lap_var": laplacian_variance,
@@ -84,6 +94,7 @@ FEATURES = {
     "bright_frac": bright_fraction,
     "tile_lapvar_min": tile_lapvar_min,
     "tile_dark_max": tile_dark_max,
+    "tile_bright_max": tile_bright_max, # Ezt a sort adtuk hozzá
 }
 
 

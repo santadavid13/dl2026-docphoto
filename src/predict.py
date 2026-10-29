@@ -46,30 +46,65 @@ from pathlib import Path
 
 import pandas as pd
 import yaml
+import numpy as np
+import torch
+from src.models.mlp import MLP
+from src.data.dataset import pixels_of_image
 
 
 def load_model(checkpoint: Path, cfg: dict):
-    """Rebuild the architecture from the config and load the saved weights.
+    """Rebuild the architecture from the config and load the saved weights."""
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    
+    # Checkpoint betöltése
+    ckpt = torch.load(checkpoint, map_location=device, weights_only=False)
+    
+    # MLP újraépítése a checkpointban tárolt input dimenzióval
+    model = MLP(
+        in_dim=ckpt["in_dim"], 
+        hidden=list(cfg["model"]["hidden"]), 
+        dropout=cfg["model"]["dropout"],
+        prior=0.5 # A súlybetöltés miatt a kezdőérték itt már mindegy
+    )
+    
+    # Súlyok betöltése
+    model.load_state_dict(ckpt["state_dict"])
+    model.to(device)
+    model.eval() # Fontos: eval mód a Dropout kikapcsolásához
+    
+    # Mentsük el a scaler értékeket és a device-t a model objektumba, 
+    # hogy a predict_one függvény könnyen hozzáférjen
+    model.scaler_mean = ckpt["scaler_mean"]
+    model.scaler_scale = ckpt["scaler_scale"]
+    model.device = device
+    
+    return model
 
-    Put the model in eval mode and disable gradients. Return something callable
-    that maps one preprocessed image to one float.
-    """
-    raise NotImplementedError("TODO: build the model and load the checkpoint")
 
-
-def preprocess(image_path: Path, cfg: dict):
-    """Read one image and turn it into model input.
-
-    This must match training exactly. A resize or a normalisation that differs
-    between training and prediction is the single most common reason a good
-    validation score turns into a bad leaderboard score.
-    """
-    raise NotImplementedError("TODO: load and preprocess a single image")
+def preprocess(image_path: Path, cfg: dict) -> np.ndarray:
+    """Read one image and turn it into model input."""
+    # A méretet a konfigurációból olvassuk ki
+    size = cfg["data"]["pixel_size"]
+    # A laborhoz kapott pixels_of_image beolvassa és a megfelelő méretre alakítja a képet
+    return pixels_of_image(image_path, size)
 
 
 def predict_one(model, image_path: Path, cfg: dict) -> float:
     """One image in, one number out."""
-    raise NotImplementedError("TODO: run the model, return a float in [0, 1]")
+    # Nyers pixelek beolvasása
+    x_raw = preprocess(image_path, cfg)
+    
+    # Standardizálás a betanításkor elmentett mean és scale értékekkel
+    x_scaled = (x_raw - model.scaler_mean) / model.scaler_scale
+    
+    # Numpy array átalakítása PyTorch tensorrá, és egy Batch dimenzió hozzáadása (unsqueeze)
+    x_tensor = torch.as_tensor(x_scaled, dtype=torch.float32, device=model.device).unsqueeze(0)
+    
+    with torch.no_grad():
+        out = model(x_tensor)
+        
+    # A kimenet egy egyelemű tensor, ezt alakítjuk vissza sima float értékké
+    return float(out.cpu().item())
 
 
 def main() -> None:

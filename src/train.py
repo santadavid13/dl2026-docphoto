@@ -15,6 +15,8 @@ whole of supervised training.
 """
 from __future__ import annotations
 
+import copy
+
 import argparse
 import time
 
@@ -128,55 +130,85 @@ def validate(model: torch.nn.Module, X_val: torch.Tensor, y_val: np.ndarray, ok:
 
 def train_mlp(cfg: dict, X: np.ndarray, df: pd.DataFrame, train_idx: np.ndarray, val_idx: np.ndarray,
               device: str | None = None, tags: list[str] | None = None, log=print) -> dict:
-    """Train on the pixel rows train_idx, validate on val_idx after every epoch, log everything.
-
-    `X` is the pixel table, one row per row of `df`. Returns the history, the
-    validation predictions after the first and the last epoch, the trained
-    model, the checkpoint path and the W&B run page.
-    """
+    
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     set_seed(cfg["seed"])
     tr = cfg["train"]
 
-    scaler = Standardiser().fit(X[train_idx])
-    X_tr = to_tensor(scaler.transform(X[train_idx]), device)
-    X_va = to_tensor(scaler.transform(X[val_idx]), device)
-    y_tr = to_tensor(df[config.TARGET].to_numpy()[train_idx], device)
+    # 1. Őszinte Early Stopping Split: a train_idx 20%-át leválasztjuk belső validációra
+    np.random.shuffle(train_idx)
+    split_point = int(len(train_idx) * 0.8)
+    sub_train_idx = train_idx[:split_point]
+    sub_val_idx = train_idx[split_point:]
+
+    scaler = Standardiser().fit(X[sub_train_idx])
+    
+    # Tenztorok előkészítése
+    X_tr = to_tensor(scaler.transform(X[sub_train_idx]), device)
+    X_sub_va = to_tensor(scaler.transform(X[sub_val_idx]), device)
+    X_va = to_tensor(scaler.transform(X[val_idx]), device) # Az érintetlen végső validáció
+    
+    y_tr = to_tensor(df[config.TARGET].to_numpy()[sub_train_idx], device)
+    y_sub_va = df[config.TARGET].to_numpy()[sub_val_idx]
     y_va = df[config.TARGET].to_numpy()[val_idx]
+    
+    ok_sub = df["eval_ok"].to_numpy()[sub_val_idx] == 1
     ok = df["eval_ok"].to_numpy()[val_idx] == 1
 
     model = MLP(in_dim=X.shape[1], hidden=list(cfg["model"]["hidden"]), dropout=cfg["model"]["dropout"],
                 prior=float(y_tr.mean())).to(device)
     optimizer = make_optimizer(model, cfg)
-    loss_fn = torch.nn.MSELoss()           # the metric is RMSE; same minimiser
+    loss_fn = torch.nn.MSELoss()
     generator = torch.Generator().manual_seed(cfg["seed"])
 
     tracking.init_run(cfg, tags=tags)
     history, snapshots = [], {}
-    log(f"{cfg['name']}: {len(train_idx)} train / {len(val_idx)} val rows, {X.shape[1]} inputs, "
-        f"{sum(p.numel() for p in model.parameters()):,} parameters, {device}")
+    
+    best_sub_val_rmse = float('inf')
+    best_model_state = None
+
+    log(f"{cfg['name']}: {len(sub_train_idx)} train / {len(sub_val_idx)} early-stop val / {len(val_idx)} final val rows")
+    
     for epoch in range(1, tr["epochs"] + 1):
         t0 = time.time()
         loss = train_epoch(model, optimizer, loss_fn, X_tr, y_tr, tr["batch_size"], generator)
-        val = validate(model, X_va, y_va, ok)
-        train_eval = rmse(y_tr.cpu().numpy(), predict(model, X_tr))   # dropout off, as in validation
-        row = {"epoch": epoch, "train_loss": loss, "train_rmse": train_eval, "val_rmse": val,
+        
+        # Belső validáció az early stoppinghoz
+        sub_val = validate(model, X_sub_va, y_sub_va, ok_sub)
+        
+        # Súlyok mentése, ha javult a belső validációs hiba
+        if sub_val < best_sub_val_rmse:
+            best_sub_val_rmse = sub_val
+            best_model_state = copy.deepcopy(model.state_dict())
+
+        train_eval = rmse(y_tr.cpu().numpy(), predict(model, X_tr))
+        
+        row = {"epoch": epoch, "train_loss": loss, "train_rmse": train_eval, "val_rmse": sub_val,
                "seconds": time.time() - t0}
         history.append(row)
-        tracking.log_metrics({"train_loss": loss, "train_rmse": train_eval, "val_rmse": val}, step=epoch)
-        if epoch in (1, tr["epochs"]) or epoch % tr.get("log_every", 10) == 0:
-            log(f"epoch {epoch:3d}  train loss {loss:.4f}  train RMSE {train_eval:.4f}  val RMSE {val:.4f}")
-        if epoch in (1, tr["epochs"]):
-            snapshots[epoch] = predict(model, X_va)
+        tracking.log_metrics({"train_loss": loss, "train_rmse": train_eval, "val_rmse": sub_val}, step=epoch)
+
+    # Visszatöltjük a legjobb epoch súlyait
+    if best_model_state is not None:
+        model.load_state_dict(best_model_state)
+
+    # 2. Végső kiértékelés az ÉRINTETLEN validációs halmazon
+    final_val_rmse = validate(model, X_va, y_va, ok)
+    log(f"Honest Early Stopping Final Val RMSE on untouched data: {final_val_rmse:.4f}")
 
     ckpt = config.ROOT / "models" / f"{cfg['name']}.pt"
     ckpt.parent.mkdir(exist_ok=True)
     torch.save({"state_dict": model.state_dict(), "config": cfg, "in_dim": X.shape[1],
                 "scaler_mean": scaler.mean, "scaler_scale": scaler.scale}, ckpt)
-    tracking.log_checkpoint(ckpt, cfg["name"], {"val_rmse": history[-1]["val_rmse"]})
-    tracking.log_metrics({"final_val_rmse": history[-1]["val_rmse"]})
+    
+    tracking.log_checkpoint(ckpt, cfg["name"], {"val_rmse": final_val_rmse})
+    tracking.log_metrics({"final_val_rmse": final_val_rmse})
     url = tracking.run_url()
     tracking.finish()
+    
+    # A snapshots[tr["epochs"]] helyett a legjobb modellt adjuk vissza predikcióként
+    snapshots[tr["epochs"]] = predict(model, X_va)
+
     return {"history": pd.DataFrame(history), "val_pred": snapshots[tr["epochs"]], "snapshots": snapshots,
             "model": model, "checkpoint": ckpt, "url": url, "val_index": val_idx, "ok": ok}
 
