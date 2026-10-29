@@ -58,32 +58,70 @@ def to_tensor(a, device: str) -> torch.Tensor:
 
 def make_optimizer(model: torch.nn.Module, cfg: dict) -> torch.optim.Optimizer:
     """TASK 3. The optimiser, using cfg['train']['lr'] and cfg['train']['weight_decay']."""
-    raise NotImplementedError("TASK 3: choose the optimiser")
+    return torch.optim.Adam(
+        model.parameters(),
+        lr=cfg["train"]["lr"],
+        weight_decay=cfg["train"]["weight_decay"]
+    )
 
 
 def train_epoch(model: torch.nn.Module, optimizer: torch.optim.Optimizer, loss_fn: torch.nn.Module,
                 X: torch.Tensor, y: torch.Tensor, batch_size: int, generator: torch.Generator) -> float:
-    """TASK 4. One pass over the training rows in shuffled minibatches.
-
-    Draw the order with `torch.randperm(len(X), generator=generator)` so the
-    run is reproducible, step the optimiser once per minibatch, and return the
-    mean training loss over the epoch, weighted by minibatch size.
-    """
-    raise NotImplementedError("TASK 4: the minibatch loop")
+    """TASK 4. One pass over the training rows in shuffled minibatches."""
+    model.train()
+    
+    # Sorrend keverése a determinisztikus generátorral
+    indices = torch.randperm(len(X), generator=generator)
+    
+    total_loss = 0.0
+    total_samples = 0
+    
+    # Minibatch ciklus
+    for start_idx in range(0, len(X), batch_size):
+        batch_idx = indices[start_idx : start_idx + batch_size]
+        X_batch = X[batch_idx]
+        y_batch = y[batch_idx]
+        
+        optimizer.zero_grad()
+        
+        preds = model(X_batch)
+        loss = loss_fn(preds, y_batch)
+        
+        loss.backward()
+        optimizer.step()
+        
+        # A veszteséget súlyozzuk a minibatch méretével a pontos átlaghoz
+        batch_len = len(X_batch)
+        total_loss += loss.item() * batch_len
+        total_samples += batch_len
+        
+    return total_loss / total_samples
 
 
 def predict(model: torch.nn.Module, X: torch.Tensor, batch_size: int = 1024) -> np.ndarray:
-    """TASK 5. The model's outputs for every row of X, as a numpy array of shape (len(X),).
-
-    Evaluation mode, no gradients, and it must give the same answer for a row
-    whether that row is predicted alone or inside a batch.
-    """
-    raise NotImplementedError("TASK 5: inference")
+    """TASK 5. The model's outputs for every row of X, as a numpy array of shape (len(X),)."""
+    model.eval()
+    all_preds = []
+    
+    with torch.no_grad():
+        for start_idx in range(0, len(X), batch_size):
+            X_batch = X[start_idx : start_idx + batch_size]
+            preds = model(X_batch)
+            all_preds.append(preds.cpu().numpy())
+            
+    return np.concatenate(all_preds)
 
 
 def validate(model: torch.nn.Module, X_val: torch.Tensor, y_val: np.ndarray, ok: np.ndarray) -> float:
     """TASK 6. RMSE on the validation rows where `ok` is True (the scoreable ones)."""
-    raise NotImplementedError("TASK 6: validation")
+    preds = predict(model, X_val)
+    
+    # Csak az ok (scoreable) sorokat vesszük figyelembe
+    preds_ok = preds[ok]
+    y_val_ok = y_val[ok]
+    
+    # Az importált rmse függvényt használjuk a src.evaluate-ből
+    return rmse(y_val_ok, preds_ok)
 
 
 # ------------------------------------------------------------------ given

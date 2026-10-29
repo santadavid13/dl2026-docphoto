@@ -20,12 +20,39 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
-
+import math
 
 class MLP(nn.Module):
     def __init__(self, in_dim: int, hidden: list[int], dropout: float = 0.3, prior: float = 0.5):
         super().__init__()
-        raise NotImplementedError("TASK 2: build the layers")
+        
+        layers = []
+        prev_dim = in_dim
+        
+        # Rejtett rétegek (Linear + ReLU + Dropout) felépítése a `hidden` lista alapján
+        for h in hidden:
+            layers.append(nn.Linear(prev_dim, h))
+            layers.append(nn.ReLU())
+            layers.append(nn.Dropout(dropout))
+            prev_dim = h
+            
+        self.features = nn.Sequential(*layers)
+        
+        # Kimeneti réteg (1 db kimenet)
+        self.head = nn.Linear(prev_dim, 1)
+        
+        # Trükk a 'prior' használatára: 
+        # Mivel a végén Sigmoidot használunk, a kezdeti bias-t úgy állítjuk be,
+        # hogy a hálózat alapértelmezetten a betanító halmaz átlagát (prior) jósolja.
+        # Ennek az értéke az inverz sigmoid, azaz: log(prior / (1 - prior))
+        bias_val = math.log(prior / (1.0 - prior))
+        nn.init.constant_(self.head.bias, bias_val)
+        nn.init.zeros_(self.head.weight) # Súlyok nullázása a tiszta prior induláshoz
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        raise NotImplementedError("TASK 2: one number in [0, 1] per row, shape (batch,)")
+        x = self.features(x)
+        x = self.head(x)
+        # Sigmoid szorítja be az eredményt a [0, 1] intervallumba
+        x = torch.sigmoid(x)
+        # Squeeze eltávolítja az utolsó dimenziót, így (batch, 1) helyett (batch,) lesz a forma
+        return x.squeeze(-1)
