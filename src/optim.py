@@ -28,17 +28,22 @@ import torch.nn as nn
 
 
 def param_groups(model: nn.Module, weight_decay: float) -> list[dict]:
-    """TASK 3. Split the trainable parameters into two groups for AdamW.
-
-    Return `[{"params": [...], "weight_decay": weight_decay},
-             {"params": [...], "weight_decay": 0.0}]`
-    where the second group holds every parameter with `p.ndim <= 1` (biases,
-    BatchNorm and GroupNorm weights and biases) and the first everything else
-    (convolution and linear weights). Skip parameters with
-    `requires_grad == False` (a frozen backbone in lab 5). Every trainable
-    parameter in exactly one group.
-    """
-    raise NotImplementedError("TASK 3: the two parameter groups")
+    """TASK 3. Split the trainable parameters into two groups for AdamW."""
+    decay_params = []
+    no_decay_params = []
+    
+    for p in model.parameters():
+        if not p.requires_grad:
+            continue
+        if p.ndim <= 1:
+            no_decay_params.append(p)
+        else:
+            decay_params.append(p)
+            
+    return [
+        {"params": decay_params, "weight_decay": weight_decay},
+        {"params": no_decay_params, "weight_decay": 0.0}
+    ]
 
 
 def make_adamw(model: nn.Module, cfg: dict) -> torch.optim.Optimizer:

@@ -33,20 +33,29 @@ from torchvision.transforms.v2 import functional as TF
 
 
 def augment_safe(x: torch.Tensor, generator: torch.Generator, max_shift: int = 8, fill: float = 0.0) -> torch.Tensor:
-    """TASK 4. Mirror each image left-right with probability 1/2, then shift it by up to `max_shift` px.
-
-    Per image, not per batch: draw a (batch,) mask with `torch.rand(len(x), generator=generator) < 0.5`
-    and a (batch, 2) integer shift with `torch.randint(-max_shift, max_shift + 1, (len(x), 2), generator=generator)`.
-    Both are drawn on the CPU (the generator lives there); move the mask to `x.device`.
-
-    * the mirror: `torch.where(mask.view(-1, 1, 1, 1), x.flip(-1), x)`;
-    * the shift: pad the whole batch by `max_shift` on every side with `fill`
-      (`F.pad(x, (s, s, s, s), value=fill)`), then cut each image's H x W
-      window back out at its own offset. A loop over the batch is fine.
-      Not `torch.roll`: it would wrap the right edge of the page round to the
-      left and invent a sharp edge that is not in the photograph.
-    """
-    raise NotImplementedError("TASK 4: flip and shift")
+    """TASK 4. Mirror each image left-right with probability 1/2, then shift it by up to `max_shift` px."""
+    
+    # 1. Flip
+    mask = (torch.rand(len(x), generator=generator) < 0.5).to(x.device)
+    x_flipped = torch.where(mask.view(-1, 1, 1, 1), x.flip(-1), x)
+    
+    # 2. Shift
+    shifts = torch.randint(-max_shift, max_shift + 1, (len(x), 2), generator=generator)
+    
+    # Pad the whole batch by max_shift on every side with the fill value
+    x_padded = F.pad(x_flipped, (max_shift, max_shift, max_shift, max_shift), value=fill)
+    
+    # Cut each image's H x W window back out at its own offset
+    out = torch.empty_like(x)
+    H, W = x.shape[2], x.shape[3]
+    
+    for i in range(len(x)):
+        dy, dx = shifts[i, 0].item(), shifts[i, 1].item()
+        y_start = max_shift + dy
+        x_start = max_shift + dx
+        out[i] = x_padded[i, :, y_start:y_start+H, x_start:x_start+W]
+        
+    return out
 
 
 def augment_jitter(x: torch.Tensor, generator: torch.Generator, fill: float = 0.0) -> torch.Tensor:

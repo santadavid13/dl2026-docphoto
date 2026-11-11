@@ -59,25 +59,34 @@ def initial_loss(model: nn.Module, xb: torch.Tensor, yb: torch.Tensor, loss) -> 
 
 def overfit_one_batch(model: nn.Module, xb: torch.Tensor, yb: torch.Tensor, loss,
                       steps: int = 100, lr: float = 1e-3) -> list[float]:
-    """TASK 2a. Train on this one batch for `steps` steps; return the loss of every step.
-
-    Training mode, `torch.optim.AdamW(model.parameters(), lr=lr)` with no
-    weight decay, and per step: zero_grad, forward, loss, backward, step.
-    Record `loss.item()` before the step. The list should fall to nearly
-    zero; with sixteen photographs and a hundred steps, under 1e-3.
-    """
-    raise NotImplementedError("TASK 2a: overfit one batch")
+    """TASK 2a. Train on this one batch for `steps` steps; return the loss of every step."""
+    model.train()
+    opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.0)
+    losses = []
+    
+    for _ in range(steps):
+        opt.zero_grad()
+        out = model(xb)
+        l = loss(out, yb)
+        losses.append(l.item())
+        l.backward()
+        opt.step()
+        
+    return losses
 
 
 def same_seed_twice(make_model, xb: torch.Tensor, yb: torch.Tensor, loss, seed: int = 0,
                     steps: int = 5) -> tuple[list[float], list[float]]:
-    """TASK 2b. Two short runs from the same seed; return both lists of losses.
-
-    `make_model()` builds a fresh model. For each of the two runs: `set_seed(seed)`,
-    build the model, and train it with `overfit_one_batch` for `steps` steps.
-    The caller compares the two lists.
-    """
-    raise NotImplementedError("TASK 2b: the same seed, twice")
+    """TASK 2b. Two short runs from the same seed; return both lists of losses."""
+    set_seed(seed)
+    model1 = make_model()
+    losses1 = overfit_one_batch(model1, xb, yb, loss, steps=steps)
+    
+    set_seed(seed)
+    model2 = make_model()
+    losses2 = overfit_one_batch(model2, xb, yb, loss, steps=steps)
+    
+    return losses1, losses2
 
 
 def memory_estimate(model: nn.Module, xb: torch.Tensor) -> dict:
